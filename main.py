@@ -1,4 +1,4 @@
-# main.py - HackRx 6.0 Complete Implementation
+# main.py - HackRx 6.0 Complete Implementation (FIXED)
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 
 # Required imports (install via requirements.txt)
-import openai
+from openai import OpenAI
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
@@ -73,8 +73,8 @@ class AdvancedDocumentProcessor:
         # Initialize embedding model
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
         
-        # Initialize OpenAI client
-        openai.api_key = os.getenv('OPENAI_API_KEY')
+        # Initialize OpenAI client (FIXED for v1.6.1)
+        self.openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
         # Document cache
         self.doc_cache = {}
@@ -159,58 +159,27 @@ class AdvancedDocumentProcessor:
             logger.error(f"DOCX extraction error: {str(e)}")
             raise HTTPException(status_code=500, detail=f"DOCX processing failed: {str(e)}")
 
-    # Replace the document processing section in main.py with this lightweight version:
-
     def detect_format_and_extract(self, content: bytes, url: str) -> Dict[str, Any]:
-        """Lightweight document extraction - text only for fast deployment"""
-        try:
-            # Try to decode as text first
-            text = content.decode('utf-8')
-            return {'text': text, 'format': 'text'}
-        except UnicodeDecodeError:
+        """Detect document format and extract text"""
+        # Simple format detection based on URL and content
+        if url.lower().endswith('.pdf') or content.startswith(b'%PDF'):
+            return self.extract_text_from_pdf(content)
+        elif url.lower().endswith('.docx') or b'word/' in content[:1000]:
+            return self.extract_text_from_docx(content)
+        else:
+            # Try PDF first, then DOCX
             try:
-                # Try different encodings
-                for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
+                return self.extract_text_from_pdf(content)
+            except:
+                try:
+                    return self.extract_text_from_docx(content)
+                except:
+                    # Fallback to plain text
                     try:
-                        text = content.decode(encoding)
+                        text = content.decode('utf-8')
                         return {'text': text, 'format': 'text'}
                     except:
-                        continue
-            except:
-                pass
-        
-        # If it's a PDF URL, try simple text extraction
-        if url.lower().endswith('.pdf'):
-            # For demo purposes, create a mock policy text
-            # In real deployment, this would extract PDF text
-            return {
-                'text': """
-                National Parivar Mediclaim Plus Policy
-                
-                Grace Period: A grace period of thirty days is provided for premium payment.
-                
-                Waiting Period for PED: Pre-existing diseases have a waiting period of thirty-six (36) months.
-                
-                Maternity Coverage: Maternity expenses are covered after 24 months of continuous coverage.
-                
-                Cataract Surgery: Waiting period of two (2) years for cataract surgery.
-                
-                Organ Donor Coverage: Medical expenses for organ donor's hospitalization are covered.
-                
-                No Claim Discount: 5% discount on base premium for claim-free years.
-                
-                Health Check-ups: Reimbursement for health check-ups every two years.
-                
-                Hospital Definition: Institution with minimum 10-15 inpatient beds with qualified staff.
-                
-                AYUSH Treatment: Coverage for Ayurveda, Yoga, Naturopathy, Unani, Siddha, Homeopathy.
-                
-                Room Rent Limits: Plan A has 1% of Sum Insured daily room rent limit.
-                """,
-                'format': 'mock_pdf'
-            }
-        
-        raise HTTPException(status_code=400, detail="Unsupported document format for lightweight version")
+                        raise HTTPException(status_code=400, detail="Unsupported document format")
 
     def intelligent_chunking(self, doc_data: Dict[str, Any]) -> List[DocumentChunk]:
         """Create intelligent chunks preserving context"""
@@ -398,8 +367,9 @@ Provide a clear, direct answer that addresses the question completely. Include s
 Answer:"""
 
         try:
+            # FIXED: Using the new OpenAI client API
             response = await asyncio.to_thread(
-                openai.ChatCompletion.create,
+                self.openai_client.chat.completions.create,
                 model="gpt-4",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,  # Low temperature for consistency
@@ -534,5 +504,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
